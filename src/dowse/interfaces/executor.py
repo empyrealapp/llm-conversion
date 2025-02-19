@@ -5,6 +5,7 @@ from typing import Any, Awaitable, Callable, Generic, Self, TypeVar
 from emp_agents import AgentBase, GenericTool
 from emp_agents.models import Message, Provider
 from emp_agents.providers import OpenAIModelType, OpenAIProvider
+from emp_agents.utils import count_tokens
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError
 
 from dowse.exceptions import PreprocessorError
@@ -72,6 +73,7 @@ class Executor(
     async def execute(
         self,
         input_: T,
+        persist_agent: bool = False,
     ) -> AgentMessage[OutputType]:
         response_format_type = self._extract_response_format()
         response_format = response_format_type
@@ -95,11 +97,12 @@ class Executor(
         if not self.prompt:
             raise ValueError("Prompt is required")
 
-        self._agent = AgentBase(
-            prompt=self.prompt,
-            provider=self.provider,
-            tools=await self.load_tools(processed_input),
-        )
+        if (not persist_agent) or (self._agent is None):
+            self._agent = AgentBase(
+                prompt=self.prompt,
+                provider=self.provider,
+                tools=await self.load_tools(processed_input),
+            )
 
         assert processed_input.content is not None
 
@@ -131,6 +134,11 @@ class Executor(
 
         return formatted_response
 
+    async def ask(self, question: str) -> str:
+        if self._agent is None:
+            raise ValueError("Agent is not initialized")
+        return await self._agent.answer(question)
+
     def _extract_response_format(self) -> type[OutputType]:
         if type(self).__base__ is Executor:
             return type(self).__pydantic_generic_metadata__["args"][2]
@@ -161,3 +169,8 @@ class Executor(
         else:
             self.effects.append(other)
         return self
+
+    def token_count(self) -> int:
+        if self.prompt is None:
+            return 0
+        return count_tokens(self.prompt)
